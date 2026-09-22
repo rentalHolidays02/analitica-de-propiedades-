@@ -4,6 +4,7 @@ import { traerHuecos } from "@/lib/lodgify";
 import { propiedadesActivas, referencias, seguimiento, resumenSnapshots } from "@/lib/consultas";
 import { precioSugerido, nochesEnVentana, hoy, sumaDias, MESES, euros } from "@/lib/calculos";
 import BotonSync from "./componentes/BotonSync";
+import BotonSyncComentarios from "./componentes/BotonSyncComentarios";
 
 // La disponibilidad se lee en vivo de Lodgify (0,6s) y no se cachea: es el dato
 // que no puede estar desfasado, porque de el salen las recomendaciones de precio.
@@ -121,6 +122,7 @@ export default async function Disponibilidad(
             <button className="rounded bg-slate-900 px-3 py-1.5 text-sm font-medium text-white">Ver</button>
           </form>
           <BotonSync />
+          <BotonSyncComentarios />
         </div>
       </div>
 

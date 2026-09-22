@@ -60,6 +60,19 @@ export async function insertar(recurso: string, filas: object | object[]) {
   if (!r.ok) throw new Error(`Supabase POST ${recurso}: ${r.status} ${await r.text()}`);
 }
 
+/** UPDATE parcial con filtro PostgREST. A diferencia de guardar(), no es un
+ *  upsert: no arrastra las columnas NOT NULL que faltan en `cambios`, asi que
+ *  sirve para tocar solo algunas columnas de una fila que ya existe. */
+export async function actualizar(recurso: string, consulta: string, cambios: object) {
+  if (!consulta.trim()) throw new Error("actualizar() sin filtro actualizaria la tabla entera");
+  const r = await fetch(`${URL_BASE()}/${recurso}?${consulta}`, {
+    method: "PATCH",
+    headers: cabeceras({ Prefer: "return=minimal" }),
+    body: JSON.stringify(cambios),
+  });
+  if (!r.ok) throw new Error(`Supabase PATCH ${recurso}: ${r.status} ${await r.text()}`);
+}
+
 /** DELETE con filtro PostgREST. `consulta` nunca puede ir vacia: borraria la tabla. */
 export async function borrar(recurso: string, consulta: string) {
   if (!consulta.trim()) throw new Error("borrar() sin filtro borraria la tabla entera");

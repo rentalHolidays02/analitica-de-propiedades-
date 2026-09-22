@@ -1,16 +1,25 @@
 // Lecturas que comparten las paginas. Todo servidor: nada llega al navegador.
 import { seleccionar } from "./db";
+import { hoy } from "./calculos";
 import type { Referencias } from "./calculos";
 
 export type Propiedad = {
   property_id: number; nombre: string; ref: string | null; zona: string | null;
   activa: boolean; nota: number | null; precio_min: number | null; precio_max: number | null;
+  comentarios_airbnb: string | null; comentarios_booking: string | null;
+  nota_airbnb: number | null; nota_booking: number | null;
 };
 
 export type FilaMensual = {
   property_id: number; nombre: string; zona: string | null;
   anio: number; mes: number; reservas: number; noches: number;
   ingresos: number; adr: number | null;
+  /** Lo que de verdad cobra el propietario (gestion) o, si ese mes no esta
+   *  cerrado en gestion todavia, la estimacion que solo resta comision. */
+  ingresos_reales: number;
+  /** true = ingresos_reales viene de /rendimiento (RentalHolidays), la fuente
+   *  autoritativa; false = es la estimacion de v_reservas_validas. */
+  ingresos_de_gestion: boolean;
 };
 
 export type Apunte = {
@@ -71,25 +80,32 @@ export const apuntesPorPagina = APUNTES_POR_PAGINA;
 
 /** Pide una fila de mas para saber si hay pagina siguiente sin contar el total. */
 export function apuntesFiltrados(
-  { zona, fuente, pagina = 1 }: { zona?: string; fuente?: string; pagina?: number },
+  { zona, fuente, desde, hasta, pagina = 1 }:
+  { zona?: string; fuente?: string; desde?: string; hasta?: string; pagina?: number },
 ) {
   const filtros = [
     zona ? `zona=eq.${encodeURIComponent(zona)}` : "",
     fuente ? `fuente=eq.${encodeURIComponent(fuente)}` : "",
+    desde ? `fecha_estancia=gte.${desde}` : "",
+    hasta ? `fecha_estancia=lte.${hasta}` : "",
   ].filter(Boolean).map((f) => `${f}&`).join("");
-  const desde = (pagina - 1) * APUNTES_POR_PAGINA;
+  const offset = (pagina - 1) * APUNTES_POR_PAGINA;
   return seleccionar<Apunte>("competencia",
-    `${filtros}order=fecha_estancia.asc,apuntado_en.desc&limit=${APUNTES_POR_PAGINA + 1}&offset=${desde}`);
+    `${filtros}order=fecha_estancia.asc,apuntado_en.desc&limit=${APUNTES_POR_PAGINA + 1}&offset=${offset}`);
 }
 
-/** Los tres niveles de respaldo del precio de referencia, ya en memoria. */
+/** Los niveles de respaldo del precio de referencia, ya en memoria. El primero
+ *  es el precio de venta configurado en gestion; los otros tres, el historico. */
 export async function referencias(): Promise<Referencias> {
-  const [casaMes, casa, zonaMes] = await Promise.all([
+  const [gestion, casaMes, casa, zonaMes] = await Promise.all([
+    seleccionar<{ property_id: number; fecha: string; precio: number }>(
+      "tarifas_gestion", `fecha=gte.${hoy()}&select=property_id,fecha,precio`),
     seleccionar<{ property_id: number; mes: number; adr: number }>("v_adr_casa_mes"),
     seleccionar<{ property_id: number; adr: number }>("v_adr_casa"),
     seleccionar<{ zona: string; mes: number; adr: number }>("v_adr_zona_mes"),
   ]);
   return {
+    gestion: new Map(gestion.map((r) => [`${r.property_id}|${r.fecha}`, Number(r.precio)])),
     casaMes: new Map(casaMes.map((r) => [`${r.property_id}|${r.mes}`, Number(r.adr)])),
     casa: new Map(casa.map((r) => [r.property_id, Number(r.adr)])),
     zonaMes: new Map(zonaMes.map((r) => [`${r.zona}|${r.mes}`, Number(r.adr)])),

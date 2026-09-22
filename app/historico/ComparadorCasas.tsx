@@ -6,6 +6,8 @@ const DIAS_SEMANA = ["domingo", "lunes", "martes", "miércoles", "jueves", "vier
 
 export type CasaComparativa = {
   propertyId: number; nombre: string; zona: string | null; nota: number | null;
+  comentariosAirbnb: string | null; comentariosBooking: string | null;
+  notaAirbnb: number | null; notaBooking: number | null;
   mensual: { anio: number; mes: number; noches: number; reservas: number; ingresos: number }[];
   diasSemana: { anio: number; conteos: number[] }[];
 };
@@ -175,7 +177,32 @@ function Tarjeta({ casas, casaId, setCasaId, anio, setAnio }: {
             <dt className="text-slate-500">Nota media (Lodgify)</dt>
             <dd className="font-medium">{c!.nota != null ? c!.nota.toFixed(1) : "—"}</dd>
           </div>
+          <div className="flex justify-between gap-2">
+            <dt className="text-slate-500">Nota Airbnb</dt>
+            <dd className="font-medium">{c!.notaAirbnb != null ? `${c!.notaAirbnb.toFixed(1)}/5` : "—"}</dd>
+          </div>
+          <div className="flex justify-between gap-2">
+            <dt className="text-slate-500">Nota Booking</dt>
+            <dd className="font-medium">{c!.notaBooking != null ? `${c!.notaBooking.toFixed(1)}/10` : "—"}</dd>
+          </div>
         </dl>
+      )}
+
+      {c && (c.comentariosAirbnb || c.comentariosBooking) && (
+        <div className="mt-3 space-y-2 text-sm">
+          {c.comentariosAirbnb && (
+            <div>
+              <p className="text-xs font-medium text-slate-500">Comentarios Airbnb</p>
+              <p className="whitespace-pre-line text-slate-700">{c.comentariosAirbnb}</p>
+            </div>
+          )}
+          {c.comentariosBooking && (
+            <div>
+              <p className="text-xs font-medium text-slate-500">Comentarios Booking</p>
+              <p className="whitespace-pre-line text-slate-700">{c.comentariosBooking}</p>
+            </div>
+          )}
+        </div>
       )}
 
       {s && (
@@ -213,7 +240,7 @@ export default function ComparadorCasas({ casas }: { casas: CasaComparativa[] })
     <div className="space-y-3">
       <p className="text-xs text-slate-500">
         Cada casa con su propio año — así se compara cualquier temporada contra cualquier otra.
-        Sin reseñas de texto sincronizadas: se usa la nota media que da Lodgify por casa.
+        Comentarios y nota media se actualizan cada semana desde las hojas de valoraciones.
       </p>
       <div className="flex flex-col gap-3 sm:flex-row">
         <Tarjeta casas={casas} casaId={aId} setCasaId={setAId} anio={aAnio} setAnio={setAAnio} />

@@ -1,10 +1,11 @@
 import Link from "next/link";
 import { ErrorConfiguracion } from "@/lib/db";
 import AvisoConfig from "../componentes/AvisoConfig";
-import { propiedadesActivas, mensual, llegadasValidas } from "@/lib/consultas";
+import { propiedadesActivas, mensual, llegadasValidas, reservasRango } from "@/lib/consultas";
 import { MESES, euros } from "@/lib/calculos";
 import SelectorCasa from "./SelectorCasa";
 import ComparadorCasas from "./ComparadorCasas";
+import GraficaAnual from "./GraficaAnual";
 
 export const dynamic = "force-dynamic";
 
@@ -66,10 +67,10 @@ export default async function Historico(
   const pagina = Math.max(1, Number(paginaTxt) || 1);
   const comparaPagina = Math.max(1, Number(comparaPaginaTxt) || 1);
   const id = casa ? Number(casa) : undefined;
-  const datos = await Promise.all([propiedadesActivas(), mensual(), llegadasValidas()])
+  const datos = await Promise.all([propiedadesActivas(), mensual(), llegadasValidas(), reservasRango()])
     .catch((e: unknown) => (e instanceof ErrorConfiguracion ? e : Promise.reject(e)));
   if (datos instanceof ErrorConfiguracion) return <AvisoConfig detalle={datos.message} />;
-  const [propiedades, filasCompletas, llegadas] = datos;
+  const [propiedades, filasCompletas, llegadas, rangos] = datos;
   // El comparador de dos casas necesita el mensual de TODAS, aunque arriba se
   // haya filtrado a una sola: se filtra aqui en vez de pedirlo dos veces.
   const filas = id ? filasCompletas.filter((f) => f.property_id === id) : filasCompletas;
@@ -88,17 +89,67 @@ export default async function Historico(
     }
   }
 
-  const ingresos = filas.reduce((s, f) => s + Number(f.ingresos), 0);
+  const ingresos = filas.reduce((s, f) => s + Number(f.ingresos_reales), 0);
   const totalNoches = filas.reduce((s, f) => s + f.noches, 0);
   const totalReservas = filas.reduce((s, f) => s + f.reservas, 0);
+  const mesesDeGestion = filas.filter((f) => f.ingresos_de_gestion).length;
+
+  const porAnio = new Map<number, { reservas: number; noches: number; ingresos: number }>();
+  for (const f of filas) {
+    const previo = porAnio.get(f.anio) ?? { reservas: 0, noches: 0, ingresos: 0 };
+    previo.reservas += f.reservas;
+    previo.noches += f.noches;
+    previo.ingresos += Number(f.ingresos_reales);
+    porAnio.set(f.anio, previo);
+  }
+  const resumenAnual = [...porAnio.entries()].map(([anio, v]) => ({ anio, ...v })).sort((a, b) => a.anio - b.anio);
 
   // Mes a mes de cada casa (todos los años), para el comparador.
   const mensualPorCasa = new Map<number, { anio: number; mes: number; noches: number; reservas: number; ingresos: number }[]>();
   for (const f of filasCompletas) {
     const lista = mensualPorCasa.get(f.property_id) ?? [];
-    lista.push({ anio: f.anio, mes: f.mes, noches: f.noches, reservas: f.reservas, ingresos: Number(f.ingresos) });
+    lista.push({ anio: f.anio, mes: f.mes, noches: f.noches, reservas: f.reservas, ingresos: Number(f.ingresos_reales) });
     mensualPorCasa.set(f.property_id, lista);
   }
+
+  // Top 5 casas por año (ingresos), con el rango llegada-salida que estuvo
+  // ocupada: alimenta el desglose al pulsar una barra en GraficaAnual. Siempre
+  // sobre TODAS las casas (filasCompletas), no solo la casa filtrada arriba.
+  const porCasaAnio = new Map<string, {
+    nombre: string; zona: string | null; reservas: number; noches: number; ingresos: number;
+  }>();
+  for (const f of filasCompletas) {
+    const k = `${f.property_id}|${f.anio}`;
+    const previo = porCasaAnio.get(k) ?? { nombre: f.nombre, zona: f.zona, reservas: 0, noches: 0, ingresos: 0 };
+    previo.reservas += f.reservas;
+    previo.noches += f.noches;
+    previo.ingresos += Number(f.ingresos_reales);
+    porCasaAnio.set(k, previo);
+  }
+  const rangoPorCasaAnio = new Map<string, { desde: string; hasta: string }>();
+  for (const r of rangos) {
+    const k = `${r.property_id}|${Number(r.llegada.slice(0, 4))}`;
+    const previo = rangoPorCasaAnio.get(k);
+    if (!previo) rangoPorCasaAnio.set(k, { desde: r.llegada, hasta: r.salida });
+    else {
+      if (r.llegada < previo.desde) previo.desde = r.llegada;
+      if (r.salida > previo.hasta) previo.hasta = r.salida;
+    }
+  }
+  const top5PorCasaMap = new Map<number, {
+    nombre: string; zona: string | null; reservas: number; noches: number; ingresos: number;
+    desde: string | null; hasta: string | null;
+  }[]>();
+  for (const [k, v] of porCasaAnio) {
+    const anio = Number(k.split("|")[1]);
+    const rango = rangoPorCasaAnio.get(k);
+    const lista = top5PorCasaMap.get(anio) ?? [];
+    lista.push({ ...v, desde: rango?.desde ?? null, hasta: rango?.hasta ?? null });
+    top5PorCasaMap.set(anio, lista);
+  }
+  const detallePorAnio = [...top5PorCasaMap.entries()].map(([anio, lista]) => ({
+    anio, top: lista.sort((a, b) => b.reservas - a.reservas || b.noches - a.noches).slice(0, 5),
+  }));
 
   // Dia de la semana de llegada, por casa y año: v_mensual no baja a ese detalle.
   const diaSemanaPorCasa = new Map<number, Map<number, number[]>>();
@@ -121,7 +172,7 @@ export default async function Historico(
       const previo = porCasa.get(f.property_id) ?? { nombre: f.nombre, zona: f.zona, noches: 0, reservas: 0, ingresos: 0 };
       previo.noches += f.noches;
       previo.reservas += f.reservas;
-      previo.ingresos += Number(f.ingresos);
+      previo.ingresos += Number(f.ingresos_reales);
       porCasa.set(f.property_id, previo);
     }
     return [...porCasa.entries()].map(([id, v]) => ({ propertyId: id, ...v }))
@@ -136,6 +187,8 @@ export default async function Historico(
     .filter((p) => mensualPorCasa.has(p.property_id))
     .map((p) => ({
       propertyId: p.property_id, nombre: p.nombre, zona: p.zona, nota: notaPorCasa.get(p.property_id) ?? null,
+      comentariosAirbnb: p.comentarios_airbnb, comentariosBooking: p.comentarios_booking,
+      notaAirbnb: p.nota_airbnb, notaBooking: p.nota_booking,
       mensual: mensualPorCasa.get(p.property_id) ?? [],
       diasSemana: [...(diaSemanaPorCasa.get(p.property_id) ?? new Map()).entries()]
         .map(([anio, conteos]) => ({ anio, conteos })),
@@ -157,6 +210,8 @@ export default async function Historico(
     const s = q.toString();
     return s ? `/historico?${s}` : "/historico";
   };
+  const casaSeleccionada = id ? propiedades.find((p) => p.property_id === id) : undefined;
+
   const enlaceComparaPagina = (p: number) => {
     const q = new URLSearchParams();
     if (casa) q.set("casa", casa);
@@ -184,9 +239,44 @@ export default async function Historico(
       <div className="grid gap-3 sm:grid-cols-4">
         <Caja titulo="Reservas" valor={totalReservas.toLocaleString("es-ES")} />
         <Caja titulo="Noches vendidas" valor={totalNoches.toLocaleString("es-ES")} />
-        <Caja titulo="Ingresos" valor={euros(ingresos)} />
+        <Caja titulo="Ingresos" valor={euros(ingresos)}
+              nota={filas.length ? `${mesesDeGestion}/${filas.length} meses con dato real de gestión` : undefined} />
         <Caja titulo="Precio medio/noche" valor={euros(totalNoches ? ingresos / totalNoches : null)} />
       </div>
+
+      <GraficaAnual datos={resumenAnual} detalle={detallePorAnio} />
+
+      {casaSeleccionada && (
+        <div className="grid gap-3 sm:grid-cols-2">
+          <Caja titulo="Nota Airbnb"
+                valor={casaSeleccionada.nota_airbnb != null ? `${casaSeleccionada.nota_airbnb.toFixed(1)}/5` : "—"} />
+          <Caja titulo="Nota Booking"
+                valor={casaSeleccionada.nota_booking != null ? `${casaSeleccionada.nota_booking.toFixed(1)}/10` : "—"} />
+        </div>
+      )}
+
+      {casaSeleccionada && (casaSeleccionada.comentarios_airbnb || casaSeleccionada.comentarios_booking) && (
+        <section className="rounded-lg border border-slate-200 bg-white p-4">
+          <h2 className="mb-1 text-sm font-semibold">Comentarios</h2>
+          <p className="mb-3 text-xs text-slate-500">
+            Reseñas de texto, actualizadas cada semana desde las hojas de valoraciones.
+          </p>
+          <div className="space-y-3 text-sm">
+            {casaSeleccionada.comentarios_airbnb && (
+              <div>
+                <p className="text-xs font-medium text-slate-500">Airbnb</p>
+                <p className="whitespace-pre-line text-slate-700">{casaSeleccionada.comentarios_airbnb}</p>
+              </div>
+            )}
+            {casaSeleccionada.comentarios_booking && (
+              <div>
+                <p className="text-xs font-medium text-slate-500">Booking</p>
+                <p className="whitespace-pre-line text-slate-700">{casaSeleccionada.comentarios_booking}</p>
+              </div>
+            )}
+          </div>
+        </section>
+      )}
 
       <section className="rounded-lg border border-slate-200 bg-white p-4">
         <h2 className="mb-1 text-sm font-semibold">Este año, casa por casa</h2>
@@ -272,11 +362,12 @@ export default async function Historico(
   );
 }
 
-function Caja({ titulo, valor }: { titulo: string; valor: string }) {
+function Caja({ titulo, valor, nota }: { titulo: string; valor: string; nota?: string }) {
   return (
     <div className="rounded-lg border border-slate-200 bg-white p-4">
       <p className="text-xs uppercase tracking-wide text-slate-500">{titulo}</p>
       <p className="mt-1 text-2xl font-semibold">{valor}</p>
+      {nota && <p className="mt-1 text-xs text-slate-400">{nota}</p>}
     </div>
   );
 }

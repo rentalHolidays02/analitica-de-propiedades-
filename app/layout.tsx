@@ -6,9 +6,10 @@ export const metadata: Metadata = { title: "Rental — panel", description: "Dis
 
 const PESTANAS = [
   { href: "/", texto: "Disponibilidad" },
-  { href: "/historico", texto: "Histórico" },
-  { href: "/competencia", texto: "Competencia" },
+  { href: "/historico", texto: "Histórico de reservas" },
+  { href: "/competencia", texto: "Nuestra competencia" },
   { href: "/seguimiento", texto: "Seguimiento" },
+  { href: "/ayuda", texto: "Ayuda" },
 ];
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {

@@ -12,6 +12,7 @@ const MARGEN_COMPETENCIA = 0.10; // dentro de +-10% no vale la pena mover el pre
 export type Semaforo = "🔴" | "🟡" | "🟢" | "⚪";
 
 export type Referencias = {
+  gestion: Map<string, number>;  // `${property_id}|${fecha}` -> precio configurado
   casaMes: Map<string, number>;  // `${property_id}|${mes}`
   casa: Map<number, number>;
   zonaMes: Map<string, number>;  // `${zona}|${mes}`
@@ -27,9 +28,25 @@ function tocaPico(inicio: string, fin: string): boolean {
       && Date.parse(fin)    >= Date.parse(`${anio}-08-01`);
 }
 
+/** Mediana del precio configurado en gestion para las noches del hueco. Solo
+ *  cuentan los dias con tarifa cargada: en la ventana de 90 dias hay precio
+ *  para el 58% de los dias, y 9 casas no tienen ninguno. */
+function precioGestion(
+  hueco: { property_id: number; inicio: string; fin: string },
+  ref: Referencias,
+): number | null {
+  const precios: number[] = [];
+  for (let t = Date.parse(hueco.inicio); t < Date.parse(hueco.fin); t += 86_400_000) {
+    const p = ref.gestion.get(`${hueco.property_id}|${new Date(t).toISOString().slice(0, 10)}`);
+    if (p != null) precios.push(p);
+  }
+  return mediana(precios);
+}
+
 /**
- * Precio para un hueco, siempre a partir de lo que ESA casa ya cobro.
- * Tres respaldos, de mas preciso a mas general: casa+mes -> casa -> zona+mes.
+ * Precio para un hueco. Manda el precio configurado en gestion, que es el de
+ * venta real; si esa casa no lo tiene cargado para esas fechas se cae a lo que
+ * ESA casa ya cobro: casa+mes -> casa -> zona+mes.
  */
 export function precioSugerido(
   hueco: { property_id: number; inicio: string; fin: string; noches: number },
@@ -37,8 +54,12 @@ export function precioSugerido(
   ref: Referencias,
 ): { precio: number | null; semaforo: Semaforo; motivo: string; tuPrecio: number | null } {
   const mes = Number(hueco.inicio.slice(5, 7));
-  let base = ref.casaMes.get(`${hueco.property_id}|${mes}`);
-  let origen = `Tú cobraste en ${MESES[mes - 1]}`;
+  let base = precioGestion(hueco, ref) ?? undefined;
+  let origen = "Tu precio en gestión";
+  if (base == null) {
+    base = ref.casaMes.get(`${hueco.property_id}|${mes}`);
+    origen = `Tú cobraste en ${MESES[mes - 1]}`;
+  }
   if (base == null) { base = ref.casa.get(hueco.property_id); origen = "Tu precio medio"; }
   if (base == null && zona) {
     base = ref.zonaMes.get(`${zona}|${mes}`);

@@ -5,7 +5,7 @@ import { traerHuecos } from "@/lib/lodgify";
 import {
   propiedadesActivas, referencias, apuntesCompetencia, apuntesFiltrados, apuntesPorPagina, gastoMercado,
 } from "@/lib/consultas";
-import { limiteMensual } from "@/lib/mercado";
+import { limiteMensual, nochesEntre } from "@/lib/mercado";
 import BotonMercado from "../componentes/BotonMercado";
 import { MESES, euros, hoy, sumaDias, mediana, veredictoCompetencia } from "@/lib/calculos";
 
@@ -15,19 +15,26 @@ const VENTANA = 60; // solo se pregunta por lo que aun se puede vender
 
 const fmtDia = (f: string) => `${Number(f.slice(8, 10))} ${MESES[Number(f.slice(5, 7)) - 1]}`;
 
-type Params = { zona?: string; fuente?: string; pagina?: string };
+type Params = { zona?: string; fuente?: string; desde?: string; hasta?: string; pagina?: string };
 
-function enlacePagina({ zona, fuente, pagina }: { zona?: string; fuente?: string; pagina: number }) {
+function enlacePagina(
+  { zona, fuente, desde, hasta, pagina }:
+  { zona?: string; fuente?: string; desde?: string; hasta?: string; pagina: number },
+) {
   const q = new URLSearchParams();
   if (zona) q.set("zona", zona);
   if (fuente) q.set("fuente", fuente);
+  if (desde) q.set("desde", desde);
+  if (hasta) q.set("hasta", hasta);
   if (pagina > 1) q.set("pagina", String(pagina));
   const s = q.toString();
   return s ? `/competencia?${s}` : "/competencia";
 }
 
 export default async function Competencia({ searchParams }: { searchParams: Promise<Params> }) {
-  const { zona: filtroZona, fuente: filtroFuente, pagina: paginaTxt } = await searchParams;
+  const {
+    zona: filtroZona, fuente: filtroFuente, desde: filtroDesde, hasta: filtroHasta, pagina: paginaTxt,
+  } = await searchParams;
   const pagina = Math.max(1, Number(paginaTxt) || 1);
   const fecha = hoy();
   const limite = sumaDias(fecha, VENTANA);
@@ -36,7 +43,7 @@ export default async function Competencia({ searchParams }: { searchParams: Prom
     traerHuecos(fecha, limite),
     referencias(),
     apuntesCompetencia(),
-    apuntesFiltrados({ zona: filtroZona, fuente: filtroFuente, pagina }),
+    apuntesFiltrados({ zona: filtroZona, fuente: filtroFuente, desde: filtroDesde, hasta: filtroHasta, pagina }),
     gastoMercado(`${fecha.slice(0, 8)}01`),
   ]).catch((e: unknown) => (e instanceof ErrorConfiguracion ? e : Promise.reject(e)));
   if (datos instanceof ErrorConfiguracion) return <AvisoConfig detalle={datos.message} />;
@@ -46,6 +53,12 @@ export default async function Competencia({ searchParams }: { searchParams: Prom
 
   const activas = new Map(propiedades.map((p) => [p.property_id, p]));
   const zonas = [...new Set(propiedades.map((p) => p.zona).filter(Boolean))].sort() as string[];
+
+  // Precio de la estancia completa (no solo por noche) cuando se filtra un rango:
+  // el dato guardado es €/noche, asi que se estima multiplicando por las noches
+  // del rango elegido. Igual que nochesEntre() en mercado.ts (checkout - checkin).
+  const nochesFiltro = filtroDesde && filtroHasta ? nochesEntre(filtroDesde, filtroHasta) : null;
+  const mostrarPrecioEstancia = nochesFiltro != null && nochesFiltro > 0;
 
   // Que mirar hoy: solo las casas con hueco de verdad, agrupadas por zona.
   const porZona = new Map<string, { nombre: string; inicio: string; fin: string; noches: number }[]>();
@@ -195,8 +208,18 @@ export default async function Competencia({ searchParams }: { searchParams: Prom
       <section className="rounded-lg border border-slate-200 bg-white p-4">
         <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
           <h2 className="text-sm font-semibold">Apuntes</h2>
-          <form className="flex items-center gap-2">
-            {filtroZona && <input type="hidden" name="zona" value={filtroZona} />}
+          <form className="flex flex-wrap items-center gap-2">
+            <select name="zona" defaultValue={filtroZona ?? ""}
+              className="rounded border border-slate-300 bg-white px-2 py-1.5 text-sm">
+              <option value="">Todas las zonas</option>
+              {zonas.map((z) => <option key={z} value={z}>{z}</option>)}
+            </select>
+            <input type="date" name="desde" defaultValue={filtroDesde ?? ""}
+              aria-label="Estancia desde"
+              className="rounded border border-slate-300 bg-white px-2 py-1.5 text-sm" />
+            <input type="date" name="hasta" defaultValue={filtroHasta ?? ""}
+              aria-label="Estancia hasta"
+              className="rounded border border-slate-300 bg-white px-2 py-1.5 text-sm" />
             <select name="fuente" defaultValue={filtroFuente ?? ""}
               className="rounded border border-slate-300 bg-white px-2 py-1.5 text-sm">
               <option value="">Todas las fuentes</option>
@@ -215,7 +238,9 @@ export default async function Competencia({ searchParams }: { searchParams: Prom
               <tr>
                 <th className="py-2">Estancia</th><th className="py-2">Zona</th>
                 <th className="py-2">Competidor</th><th className="py-2">Fuente</th>
-                <th className="py-2 text-right">€/noche</th><th className="py-2 text-right">Apuntado</th>
+                <th className="py-2 text-right">€/noche</th>
+                {mostrarPrecioEstancia && <th className="py-2 text-right">€ {nochesFiltro} noches</th>}
+                <th className="py-2 text-right">Apuntado</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
@@ -226,22 +251,37 @@ export default async function Competencia({ searchParams }: { searchParams: Prom
                   <td className="py-2 max-w-xs truncate text-slate-600">{a.competidor}</td>
                   <td className="py-2 text-xs text-slate-400">{a.fuente}</td>
                   <td className="py-2 text-right tabular-nums">{euros(Number(a.precio))}</td>
+                  {mostrarPrecioEstancia && (
+                    <td className="py-2 text-right tabular-nums text-slate-500">
+                      {euros(Number(a.precio) * nochesFiltro!)}
+                    </td>
+                  )}
                   <td className="py-2 text-right text-xs text-slate-400">{a.apuntado_en.slice(0, 10)}</td>
                 </tr>
               ))}
             </tbody>
           </table>
         )}
+        {mostrarPrecioEstancia && (
+          <p className="mt-2 text-xs text-slate-400">
+            €{" "}{nochesFiltro} noches es una estimación (€/noche × {nochesFiltro}), no el precio real
+            de una reserva de esa duración.
+          </p>
+        )}
         {(pagina > 1 || hayMas) && (
           <div className="mt-3 flex items-center justify-between text-sm">
             <Link aria-disabled={pagina <= 1}
-              href={enlacePagina({ zona: filtroZona, fuente: filtroFuente, pagina: pagina - 1 })}
+              href={enlacePagina({
+                zona: filtroZona, fuente: filtroFuente, desde: filtroDesde, hasta: filtroHasta, pagina: pagina - 1,
+              })}
               className={`rounded border border-slate-300 px-3 py-1.5 ${pagina <= 1 ? "pointer-events-none opacity-40" : "hover:bg-slate-50"}`}>
               ← Anterior
             </Link>
             <span className="text-xs text-slate-500">Página {pagina}</span>
             <Link aria-disabled={!hayMas}
-              href={enlacePagina({ zona: filtroZona, fuente: filtroFuente, pagina: pagina + 1 })}
+              href={enlacePagina({
+                zona: filtroZona, fuente: filtroFuente, desde: filtroDesde, hasta: filtroHasta, pagina: pagina + 1,
+              })}
               className={`rounded border border-slate-300 px-3 py-1.5 ${!hayMas ? "pointer-events-none opacity-40" : "hover:bg-slate-50"}`}>
               Siguiente →
             </Link>

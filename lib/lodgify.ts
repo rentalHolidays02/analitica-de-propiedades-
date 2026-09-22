@@ -69,6 +69,12 @@ function refDe(nombreInterno: string | null): string | null {
 /** El source_text de Lodgify viene a mano y sucio: "MANUAL CATY", "manual cati "... */
 function canalDe(sourceText: string | null): string {
   const t = (sourceText ?? "").toLowerCase().trim();
+  // Booking.com no manda nombre, manda su par de ids "4179551550|4682572628".
+  // Sin esto caian al return de abajo y cada reserva se contaba como un canal
+  // distinto: 1.202 de 2.592 reservas (46% de los ingresos) sin canal. Que son
+  // de Booking esta verificado contra el sistema de gestion: de las 1.042 que
+  // cruzan, las 1.042 salen como BookingCom.
+  if (/^\d{9,}\|\d{9,}$/.test(t)) return "Booking.com";
   if (t.includes("airbnb")) return "Airbnb";
   if (t.includes("booking")) return "Booking.com";
   if (t.includes("homeaway") || t.includes("vrbo") || t.includes("expedia")) return "HomeAway/Vrbo";
